@@ -1,8 +1,7 @@
 {
+  "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
-  "nodeVersion": "22.x",
   "env": {
     "VITE_BACKEND_URL": "@backend-url",
     "VITE_FIREBASE_API_KEY": "@firebase-api-key",
@@ -11,7 +10,5 @@
     "VITE_FIREBASE_STORAGE_BUCKET": "@firebase-storage-bucket",
     "VITE_FIREBASE_MESSAGING_SENDER_ID": "@firebase-messaging-sender-id",
     "VITE_FIREBASE_APP_ID": "@firebase-app-id"
-  },
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist"
+  }
 }
