@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { auth } from "@/integrations/firebase";
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -22,26 +21,45 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authInstance, setAuthInstance] = useState<any | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        navigate("/generate");
+    let unsubscribe = () => {};
+
+    const loadAuth = async () => {
+      try {
+        const { auth } = await import("@/integrations/firebase");
+        setAuthInstance(auth);
+        unsubscribe = onAuthStateChanged(auth, (user) => {
+          if (user) {
+            navigate("/generate");
+          }
+        });
+      } catch (error) {
+        console.error("Failed to initialize auth page:", error);
+        toast.error("Authentication is temporarily unavailable.");
       }
-    });
+    };
+
+    loadAuth();
+
     return () => unsubscribe();
   }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!authInstance) {
+      toast.error("Authentication is temporarily unavailable.");
+      return;
+    }
     setLoading(true);
     try {
       if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
+        await signInWithEmailAndPassword(authInstance, email, password);
         toast.success("Welcome back!");
       } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
         if (name) {
           await updateProfile(userCredential.user, { displayName: name });
         }
@@ -56,9 +74,14 @@ const Auth = () => {
   };
 
   const handleGoogle = async () => {
+    if (!authInstance) {
+      toast.error("Authentication is temporarily unavailable.");
+      return;
+    }
+
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await signInWithPopup(authInstance, provider);
       toast.success("Signed in with Google!");
     } catch (err: any) {
       toast.error(err.message || "Google sign-in failed");

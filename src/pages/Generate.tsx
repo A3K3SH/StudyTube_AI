@@ -7,7 +7,6 @@ import Footer from "@/components/Footer";
 import NotesPreview, { type StudyNotes } from "@/components/NotesPreview";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { auth } from "@/integrations/firebase/client";
 
 const YOUTUBE_REGEX = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)[\w-]+/;
 
@@ -80,31 +79,48 @@ const Generate = () => {
   const [userTier, setUserTier] = useState<'free' | 'pro' | 'team'>('free');
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user) {
-        setUserId(user.uid);
-        // Fetch user tier from Firestore
-        const fetchUserTier = async () => {
-          try {
-            const { getDoc, doc } = await import('firebase/firestore');
-            const { db } = await import('@/integrations/firebase/client');
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDoc = await getDoc(userDocRef);
-            if (userDoc.exists()) {
-              setUserTier((userDoc.data().tier as any) || 'free');
-            }
-          } catch (error) {
-            console.log('Could not fetch user tier:', error);
+    let unsubscribe = () => {};
+
+    const loadAuth = async () => {
+      try {
+        const [{ auth }, { onAuthStateChanged }] = await Promise.all([
+          import('@/integrations/firebase/client'),
+          import('firebase/auth'),
+        ]);
+
+        unsubscribe = onAuthStateChanged(auth, (user) => {
+          if (user) {
+            setUserId(user.uid);
+
+            const fetchUserTier = async () => {
+              try {
+                const { getDoc, doc } = await import('firebase/firestore');
+                const { db } = await import('@/integrations/firebase/client');
+                const userDocRef = doc(db, 'users', user.uid);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                  setUserTier((userDoc.data().tier as any) || 'free');
+                }
+              } catch (error) {
+                console.log('Could not fetch user tier:', error);
+              }
+            };
+
+            fetchUserTier();
+          } else {
+            setUserId(null);
+            setUserTier('free');
+            setNotesRemaining(null);
           }
-        };
-        fetchUserTier();
-      } else {
-        setUserId(null);
-        setUserTier('free');
-        setNotesRemaining(null);
+        });
+      } catch (error) {
+        console.error('Failed to initialize generate page auth:', error);
       }
-    });
-    return unsubscribe;
+    };
+
+    loadAuth();
+
+    return () => unsubscribe();
   }, []);
 
   const handleGenerate = async () => {

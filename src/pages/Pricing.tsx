@@ -5,8 +5,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { auth } from "@/integrations/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { type User as FirebaseUser, onAuthStateChanged } from "firebase/auth";
 import { toast } from "sonner";
 
 const supportEmail = "aakashswain18@gmail.com";
@@ -87,12 +86,28 @@ const loadRazorpayScript = () =>
 const Pricing = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [payingPlan, setPayingPlan] = useState<string | null>(null);
+  const [authInstance, setAuthInstance] = useState<any | null>(null);
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setIsLoggedIn(!!user);
-    });
+    let unsubscribe = () => {};
+
+    const loadAuth = async () => {
+      try {
+        const { auth } = await import("@/integrations/firebase");
+        setAuthInstance(auth);
+        unsubscribe = onAuthStateChanged(auth, (user) => {
+          setCurrentUser(user);
+          setIsLoggedIn(!!user);
+        });
+      } catch (error) {
+        console.error("Failed to initialize pricing auth:", error);
+      }
+    };
+
+    loadAuth();
+
     return () => unsubscribe();
   }, []);
 
@@ -102,7 +117,7 @@ const Pricing = () => {
       return;
     }
 
-    if (!isLoggedIn || !auth.currentUser) {
+    if (!isLoggedIn || !currentUser || !authInstance) {
       navigate("/auth");
       return;
     }
@@ -129,7 +144,7 @@ const Pricing = () => {
         },
         body: JSON.stringify({
           plan: planId,
-          userId: auth.currentUser.uid,
+          userId: currentUser.uid,
         }),
       });
 
@@ -146,8 +161,8 @@ const Pricing = () => {
         description: orderData.planName || `${planName} subscription`,
         order_id: orderData.orderId,
         prefill: {
-          email: auth.currentUser.email || "",
-          name: auth.currentUser.displayName || "",
+          email: currentUser.email || "",
+          name: currentUser.displayName || "",
         },
         theme: {
           color: "#06b6d4",

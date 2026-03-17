@@ -3,13 +3,13 @@ import { Zap, Menu, X, Moon, Sun, LogOut, User } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { AnimatePresence, motion } from "framer-motion";
-import { auth } from "@/integrations/firebase";
-import { onAuthStateChanged, signOut, type User as FirebaseUser } from "firebase/auth";
+import { type User as FirebaseUser } from "firebase/auth";
 
 const Navbar = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authApi, setAuthApi] = useState<{ auth: any; signOut: (auth: any) => Promise<void> } | null>(null);
   const [dark, setDark] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("theme") === "dark";
@@ -26,9 +26,26 @@ const Navbar = () => {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
+    let unsubscribe = () => {};
+
+    const loadAuth = async () => {
+      try {
+        const [{ auth }, { onAuthStateChanged, signOut }] = await Promise.all([
+          import("@/integrations/firebase"),
+          import("firebase/auth"),
+        ]);
+
+        setAuthApi({ auth, signOut });
+        unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          setUser(currentUser);
+        });
+      } catch (error) {
+        console.error("Failed to initialize auth in navbar:", error);
+      }
+    };
+
+    loadAuth();
+
     return () => unsubscribe();
   }, []);
 
@@ -61,6 +78,17 @@ const Navbar = () => {
     { label: "Pricing", action: () => { setMobileOpen(false); navigate("/pricing"); } },
     { label: "Support", action: () => { setMobileOpen(false); navigate("/support"); } },
   ];
+
+  const handleSignOut = async () => {
+    if (!authApi) return;
+
+    try {
+      await authApi.signOut(authApi.auth);
+      setMobileOpen(false);
+    } catch (error) {
+      console.error("Sign out failed:", error);
+    }
+  };
 
   return (
     <nav
@@ -105,7 +133,7 @@ const Navbar = () => {
                 {user.displayName || user.email}
               </span>
               <button
-                onClick={async () => { await signOut(auth); }}
+                onClick={handleSignOut}
                 className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 aria-label="Sign out"
               >
@@ -160,7 +188,7 @@ const Navbar = () => {
                 <Button
                   variant="outline"
                   className="w-full mt-2 rounded-full"
-                  onClick={async () => { await signOut(auth); setMobileOpen(false); }}
+                  onClick={handleSignOut}
                 >
                   <LogOut className="w-4 h-4 mr-2" /> Sign Out
                 </Button>
