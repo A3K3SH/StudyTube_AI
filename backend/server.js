@@ -169,19 +169,31 @@ function extractVideoId(url) {
 }
 
 async function getYouTubeTranscriptText(videoId) {
-  const transcriptItems = await fetchTranscript(videoId);
-  const transcriptText = transcriptItems
-    .map((item) => item?.text)
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+  const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const candidates = [canonicalUrl, videoId];
+  const errors = [];
 
-  if (!transcriptText) {
-    throw new Error('Transcript is empty for this video');
+  for (const candidate of candidates) {
+    try {
+      const transcriptItems = await fetchTranscript(candidate);
+      const transcriptText = transcriptItems
+        .map((item) => item?.text)
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+
+      if (transcriptText) {
+        // Keep prompt payload bounded for model stability and cost.
+        return transcriptText.slice(0, 14000);
+      }
+
+      errors.push(`empty transcript for ${candidate}`);
+    } catch (error) {
+      errors.push(`${candidate}: ${error?.message || 'unknown transcript error'}`);
+    }
   }
 
-  // Keep prompt payload bounded for model stability and cost.
-  return transcriptText.slice(0, 14000);
+  throw new Error(`Transcript unavailable (${errors.join(' | ')})`);
 }
 
 // Generate notes endpoint
