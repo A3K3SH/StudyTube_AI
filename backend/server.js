@@ -63,7 +63,7 @@ app.get('/', (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'StudyTube Backend is running' });
+  res.json({ status: 'ok', message: 'StudyTube Backend is running', version: '2.1.0-innertube' });
 });
 
 app.post('/api/payments/create-order', async (req, res) => {
