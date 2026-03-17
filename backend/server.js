@@ -202,6 +202,7 @@ app.post('/api/generate-notes', async (req, res) => {
   try {
     const { url, content, userId } = req.body;
     let effectiveTier = 'free';
+    let resolvedUserEmail = null;
 
     if (!url && !content) {
       return res.status(400).json({ error: 'YouTube URL or content is required' });
@@ -222,6 +223,8 @@ app.post('/api/generate-notes', async (req, res) => {
           console.warn('Unable to resolve user email from Firebase Auth:', authError.message);
         }
       }
+
+      resolvedUserEmail = userEmail || null;
 
       const hasPermanentProAccess = !!userEmail && ownerProEmails.has(userEmail);
       effectiveTier = hasPermanentProAccess ? 'pro' : userData.tier || 'free';
@@ -325,7 +328,7 @@ app.post('/api/generate-notes', async (req, res) => {
         {
           notesGeneratedToday: notesGeneratedToday,
           lastResetAt: new Date(),
-          email: userEmail || userData.email || null,
+          email: resolvedUserEmail || userData.email || null,
           tier: 'free'
         },
         { merge: true }
