@@ -52,6 +52,16 @@ try {
 app.use(cors());
 app.use(express.json());
 
+// Root endpoint (useful for Render URL checks in browser)
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'StudyTube Backend is running',
+    health: '/health',
+    generateNotes: '/api/generate-notes',
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'StudyTube Backend is running' });
