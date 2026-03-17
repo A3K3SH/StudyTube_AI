@@ -12,7 +12,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = '2.2.0-transcript-debug';
+const BACKEND_VERSION = '2.3.0-custom-headers';
 
 const PLAN_PRICING = {
   pro: { amount: 29900, tier: 'pro', name: 'StudyTube Pro Monthly' },
@@ -169,6 +169,49 @@ function extractVideoId(url) {
   return match?.[1] || null;
 }
 
+// Custom fetch wrapper with better headers for YouTube
+async function fetchWithRetry(url, options = {}, maxRetries = 3) {
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ];
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const headers = {
+        'User-Agent': userAgents[attempt % userAgents.length],
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': '*/*',
+        'DNT': '1',
+        ...options.headers
+      };
+
+      const response = await fetch(url, {
+        ...options,
+        headers
+      });
+
+      if (!response.ok) {
+        if (response.status === 429 && attempt < maxRetries - 1) {
+          // Rate limited, wait and retry
+          const waitTime = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return response;
+    } catch (error) {
+      if (attempt === maxRetries - 1) throw error;
+      // Wait before retry
+      const waitTime = Math.pow(2, attempt) * 500 + Math.random() * 500;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+}
+
 async function getYouTubeTranscriptText(videoId) {
   const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const candidates = [canonicalUrl, videoId];
@@ -176,7 +219,11 @@ async function getYouTubeTranscriptText(videoId) {
 
   for (const candidate of candidates) {
     try {
-      const transcriptItems = await fetchTranscript(candidate);
+      // Pass custom fetch function with better headers and retry logic
+      const transcriptItems = await fetchTranscript(candidate, {
+        fetch: fetchWithRetry
+      });
+      
       const transcriptText = transcriptItems
         .map((item) => item?.text)
         .filter(Boolean)
