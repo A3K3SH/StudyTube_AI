@@ -81,6 +81,7 @@ const Auth = () => {
 
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
       await signInWithPopup(authInstance, provider);
       toast.success("Signed in with Google!");
     } catch (err: any) {
