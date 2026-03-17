@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { fetchTranscript } from 'youtube-transcript/dist/youtube-transcript.esm.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -11,6 +12,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const BACKEND_VERSION = '2.2.0-transcript-debug';
 
 const PLAN_PRICING = {
   pro: { amount: 29900, tier: 'pro', name: 'StudyTube Pro Monthly' },
@@ -63,7 +65,7 @@ app.get('/', (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'StudyTube Backend is running', version: '2.1.0-innertube' });
+  res.json({ status: 'ok', message: 'StudyTube Backend is running', version: BACKEND_VERSION });
 });
 
 app.post('/api/payments/create-order', async (req, res) => {
@@ -167,99 +169,32 @@ function extractVideoId(url) {
   return match?.[1] || null;
 }
 
-// Custom transcript fetcher using browser-like headers to bypass cloud IP blocks
 async function getYouTubeTranscriptText(videoId) {
-  const ANDROID_VERSION = '20.10.38';
-  const UA = `com.google.android.youtube/${ANDROID_VERSION} (Linux; U; Android 14)`;
+  const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const candidates = [canonicalUrl, videoId];
+  const errors = [];
 
-  // Step 1: Try Android InnerTube API (works from cloud servers)
-  let captionBaseUrl = null;
-  try {
-    const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-      body: JSON.stringify({
-        context: { client: { clientName: 'ANDROID', clientVersion: ANDROID_VERSION } },
-        videoId,
-      }),
-    });
-    if (playerRes.ok) {
-      const data = await playerRes.json();
-      const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (Array.isArray(tracks) && tracks.length > 0) {
-        const track = tracks.find(t => t.languageCode === 'en') || tracks[0];
-        captionBaseUrl = track.baseUrl;
-      }
-    }
-  } catch (_) { /* fall through to web page fallback */ }
+  for (const candidate of candidates) {
+    try {
+      const transcriptItems = await fetchTranscript(candidate);
+      const transcriptText = transcriptItems
+        .map((item) => item?.text)
+        .filter(Boolean)
+        .join(' ')
+        .trim();
 
-  // Step 2: Fallback — parse ytInitialPlayerResponse from the web page
-  if (!captionBaseUrl) {
-    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36,gzip(gfe)',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-    const html = await pageRes.text();
-    if (html.includes('class="g-recaptcha"')) throw new Error('YouTube requires CAPTCHA verification for this server.');
-    const marker = 'var ytInitialPlayerResponse = ';
-    const idx = html.indexOf(marker);
-    if (idx !== -1) {
-      const startIdx = idx + marker.length;
-      let depth = 0;
-      for (let i = startIdx; i < html.length; i++) {
-        if (html[i] === '{') depth++;
-        else if (html[i] === '}') {
-          if (--depth === 0) {
-            try {
-              const data = JSON.parse(html.slice(startIdx, i + 1));
-              const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-              if (Array.isArray(tracks) && tracks.length > 0) {
-                const track = tracks.find(t => t.languageCode === 'en') || tracks[0];
-                captionBaseUrl = track.baseUrl;
-              }
-            } catch (_) { /* ignore JSON parse errors */ }
-            break;
-          }
-        }
+      if (transcriptText) {
+        // Keep prompt payload bounded for model stability and cost.
+        return transcriptText.slice(0, 14000);
       }
+
+      errors.push(`empty transcript for ${candidate}`);
+    } catch (error) {
+      errors.push(`${candidate}: ${error?.message || 'unknown transcript error'}`);
     }
   }
 
-  if (!captionBaseUrl) throw new Error('No captions found. This video may not have captions enabled.');
-
-  // Step 3: Fetch the caption XML
-  const captionRes = await fetch(captionBaseUrl, { headers: { 'User-Agent': UA } });
-  if (!captionRes.ok) throw new Error(`Caption fetch failed: ${captionRes.status}`);
-  const captionXml = await captionRes.text();
-  if (!captionXml) throw new Error('Caption content is empty for this video.');
-
-  // Step 4: Parse XML — try <p> format (YouTube Android API), then <text> format (legacy)
-  const decodeEntities = (s) => s
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
-
-  const pMatches = [...captionXml.matchAll(/<p\s+t="(\d+)"\s+d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g)];
-  const textMatches = [...captionXml.matchAll(/<text start="([^"]*)" dur="([^"]*)">([^<]*)<\/text>/g)];
-
-  let transcriptText = '';
-  if (pMatches.length > 0) {
-    transcriptText = pMatches
-      .map(m => {
-        // Collect <s> sub-elements or fall back to stripping all tags
-        const sMatches = [...m[3].matchAll(/<s[^>]*>([^<]*)<\/s>/g)].map(s => s[1]).join('');
-        return decodeEntities(sMatches || m[3].replace(/<[^>]+>/g, '')).trim();
-      })
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-  } else if (textMatches.length > 0) {
-    transcriptText = textMatches.map(m => decodeEntities(m[3]).trim()).filter(Boolean).join(' ').trim();
-  }
-
-  if (!transcriptText) throw new Error('Transcript is empty for this video.');
-  return transcriptText.slice(0, 14000);
+  throw new Error(`Transcript unavailable (${errors.join(' | ')})`);
 }
 
 // Generate notes endpoint
@@ -358,6 +293,8 @@ app.post('/api/generate-notes', async (req, res) => {
         return res.status(422).json({
           error:
             'Could not fetch transcript for this video. Ensure captions are available, or paste content manually.',
+          details: transcriptError?.message || 'unknown transcript error',
+          version: BACKEND_VERSION,
         });
       }
     }
